@@ -65,7 +65,7 @@ Really? Are you going to install it despite my warning?
 ```elixir
 def deps do
   [
-    {:pg_ex, "~> 0.1.0"}
+    {:pg_ex, git: "https://github.com/mailcmd/pg_ex.git"}
   ]
 end
 ```
