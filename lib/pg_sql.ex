@@ -1,11 +1,11 @@
 defmodule PgSQL do
   @moduledoc """
-  Available functions:
+  Exposed functions:
     - connect
     - close
     - query
     - raw_query
-    - query_result_to_list
+
 
   """
 
@@ -81,7 +81,7 @@ defmodule PgSQL do
     GenServer.stop(conn, reason)
   end
 
-  @spec query(conn :: pg_conn(), sql :: String.t) :: list()
+  @spec query(conn :: pg_conn(), sql :: String.t, opts :: Keyword.t()) :: list()
   def query(conn, sql, opts \\ []) do
     with result <- raw_query(conn, sql, opts),
          true <- is_struct(result),
@@ -92,10 +92,9 @@ defmodule PgSQL do
     end
   end
 
-  @spec raw_query(conn :: pg_conn(), sql :: String.t, vars :: list()) :: atom() | list() | {:error, Strint.t}
+  @spec raw_query(conn :: pg_conn(), sql :: String.t, opts :: Keyword.t()) :: atom() | list() | {:error, Strint.t}
   def raw_query(conn, sql, opts) do
     if Process.alive?(conn) do
-      # case Postgrex.query(conn, sql, [], decode_mapper: &binary_to_utf8/1) do
       case Postgrex.query(conn, sql, [], opts) do
         { :ok, result } ->
           cond do
