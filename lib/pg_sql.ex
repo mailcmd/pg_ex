@@ -34,7 +34,7 @@ defmodule PgSQL do
 
     def get() do
       {conn, data} = Agent.get(__MODULE__, fn cinfo -> cinfo end)
-      if Process.is_alive(conn) do
+      if Process.alive?(conn) do
         conn
       else 
         PgSQL.connect(data)
