@@ -28,7 +28,7 @@ defmodule PgSQL do
       public_access: :disabled
     ]
 
-    def persistent(pgconnect, conn) do
+    def persistent(pgconnect, pgdata) do
       Agent.start_link(fn -> {pgconnect, pgdata} end, name: __MODULE__)
     end
 
