@@ -37,7 +37,7 @@ defmodule PgSQL do
       if Process.is_alive(conn) do
         conn
       else 
-        connect(data)
+        PgSQL.connect(data)
       end
     end
   end
