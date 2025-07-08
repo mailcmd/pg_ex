@@ -28,12 +28,17 @@ defmodule PgSQL do
       public_access: :disabled
     ]
 
-    def persistent(pgconnect) do
-      Agent.start_link(fn -> pgconnect end, name: __MODULE__)
+    def persistent(pgconnect, conn) do
+      Agent.start_link(fn -> {pgconnect, pgdata} end, name: __MODULE__)
     end
 
     def get() do
-      Agent.get(__MODULE__, fn conn -> conn end)
+      {conn, data} = Agent.get(__MODULE__, fn cinfo -> cinfo end)
+      if Process.is_alive(conn) do
+        conn
+      else 
+        connect(data)
+      end
     end
   end
 
@@ -52,7 +57,7 @@ defmodule PgSQL do
     { :ok, pid } = Postgrex.start_link(Map.to_list(conn))
     with true <- Process.alive?(pid),
       { :ok, _ } <- Postgrex.query(pid, "SELECT 1", []) do
-        if conn.public_access == :enabled, do: PgSQL.Conn.persistent(pid)
+        if conn.public_access == :enabled, do: PgSQL.Conn.persistent(pid, conn)
         pid
     else
       _ ->
