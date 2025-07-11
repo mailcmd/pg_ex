@@ -28,15 +28,16 @@ defmodule PgSQL do
       public_access: :disabled
     ]
 
-    def persistent(pgconnect, pgdata) do
+    def persistent(pgconnect, pgdata, sup \\ nil) do
       Agent.start_link(fn -> {pgconnect, pgdata} end, name: __MODULE__)
+      if sup, do: Supervisor.start_child(sup, Supervisor.child_spec(__MODULE__, id: :pg_conn))
     end
 
     def get() do
       {conn, data} = Agent.get(__MODULE__, fn cinfo -> cinfo end)
       if Process.alive?(conn) do
         conn
-      else 
+      else
         PgSQL.connect(data)
       end
     end
