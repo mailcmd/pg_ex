@@ -29,9 +29,16 @@ defmodule PgSQL do
       supervisor: nil
     ]
 
+    def start_link(args) do
+      Agent.start_link(fn -> args end, name: __MODULE__)
+    end
+
     def persistent(pgconnect, pgdata, sup \\ nil) do
-      Agent.start_link(fn -> {pgconnect, pgdata} end, name: __MODULE__)
-      if sup, do: Supervisor.start_child(sup, Supervisor.child_spec(__MODULE__, id: :pg_conn))
+      if sup do
+        Supervisor.start_child(sup, child_spec({pgconnect, pgdata}))
+      else
+        start_link({pgconnect, pgdata})
+      end
     end
 
     def get() do
