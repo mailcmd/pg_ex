@@ -25,7 +25,8 @@ defmodule PgSQL do
       timeout: 15000,
       connect_timeout: 15000,
       socket_dir: nil,
-      public_access: :disabled
+      public_access: :disabled,
+      supervisor: nil
     ]
 
     def persistent(pgconnect, pgdata, sup \\ nil) do
@@ -58,7 +59,7 @@ defmodule PgSQL do
     { :ok, pid } = Postgrex.start_link(Map.to_list(conn))
     with true <- Process.alive?(pid),
       { :ok, _ } <- Postgrex.query(pid, "SELECT 1", []) do
-        if conn.public_access == :enabled, do: PgSQL.Conn.persistent(pid, conn)
+        if conn.public_access == :enabled, do: PgSQL.Conn.persistent(pid, conn, conn.supervisor)
         pid
     else
       _ ->
