@@ -20,6 +20,7 @@ defmodule PgSQL do
       :username,
       :password,
       :database,
+      name: nil,
       port: 5432,
       parameters: [],
       timeout: 15000,
@@ -29,11 +30,11 @@ defmodule PgSQL do
       supervisor: nil
     ]
 
-    def start_link(args) do
-      Agent.start_link(fn -> args end, name: __MODULE__)
+    def start_link({pgconnect, pgdata}) do
+      Agent.start_link(fn -> {pgconnect, pgdata} end, name: pgconnect.name || __MODULE__)
     end
 
-    def persistent(pgconnect, pgdata, sup \\ nil) do
+    def make_persistent(pgconnect, pgdata, sup \\ nil) do
       if sup do
         Supervisor.start_child(sup, child_spec({pgconnect, pgdata}))
       else
@@ -41,8 +42,8 @@ defmodule PgSQL do
       end
     end
 
-    def get() do
-      {conn, data} = Agent.get(__MODULE__, fn cinfo -> cinfo end)
+    def get(name \\ __MODULE__) do
+      {conn, data} = Agent.get(name, fn cinfo -> cinfo end)
       if Process.alive?(conn) do
         conn
       else
@@ -66,7 +67,7 @@ defmodule PgSQL do
     { :ok, pid } = Postgrex.start_link(Map.to_list(conn))
     with true <- Process.alive?(pid),
       { :ok, _ } <- Postgrex.query(pid, "SELECT 1", []) do
-        if conn.public_access == :enabled, do: PgSQL.Conn.persistent(pid, conn, conn.supervisor)
+        if conn.public_access == :enabled, do: PgSQL.Conn.make_persistent(pid, conn, conn.supervisor)
         pid
     else
       _ ->
