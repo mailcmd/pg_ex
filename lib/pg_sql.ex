@@ -31,7 +31,7 @@ defmodule PgSQL do
     ]
 
     def start_link({pgconnect, pgdata}) do
-      Agent.start_link(fn -> {pgconnect, pgdata} end, name: pgdata.name || __MODULE__)
+      Agent.start_link(fn -> {pgconnect, pgdata} end, name: (pgdata.name || __MODULE__))
     end
 
     def make_persistent(pgconnect, pgdata, sup \\ nil) do
@@ -47,7 +47,9 @@ defmodule PgSQL do
       if Process.alive?(conn) do
         conn
       else
-        PgSQL.connect(data)
+        conn = PgSQL.connect(data)
+        Agent.update(name, fn {_, data} -> {conn, data} end)
+        conn
       end
     end
   end
@@ -64,7 +66,8 @@ defmodule PgSQL do
   # connect/1
   @spec connect(conn :: %Conn{}) :: pg_conn() | :error
   def connect(conn) do
-    { :ok, pid } = Postgrex.start_link(Map.to_list(conn))
+    {_, kw_conn} = Keyword.pop(Map.to_list(conn), :name)
+    { :ok, pid } = Postgrex.start_link(kw_conn)
     with true <- Process.alive?(pid),
       { :ok, _ } <- Postgrex.query(pid, "SELECT 1", []) do
         if conn.public_access == :enabled, do: PgSQL.Conn.make_persistent(pid, conn, conn.supervisor)
