@@ -31,7 +31,7 @@ defmodule PgSQL do
     ]
 
     def start_link({pgconnect, pgdata}) do
-      Agent.start_link(fn -> {pgconnect, pgdata} end, name: pgconnect.name || __MODULE__)
+      Agent.start_link(fn -> {pgconnect, pgdata} end, name: pgdata.name || __MODULE__)
     end
 
     def make_persistent(pgconnect, pgdata, sup \\ nil) do
