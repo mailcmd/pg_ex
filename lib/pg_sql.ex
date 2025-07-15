@@ -67,14 +67,15 @@ defmodule PgSQL do
   @spec connect(conn :: %Conn{}) :: pg_conn() | :error
   def connect(conn) do
     name = String.to_atom("pg_" <> to_string(conn.name) <> (0..9999 |> Enum.random() |> to_string()))
-    kw_conn = Map.to_list(%{conn|name: name})
+    kw_conn = Map.to_list(%{conn|name: name}) |> IO.inspect
     { :ok, pid } =
       if conn.supervisor do
         # Supervisor.start_child(conn.supervisor, Postgrex.child_spec(kw_conn))
         Postgrex.start_link(kw_conn)
       else
         Postgrex.start_link(kw_conn)
-      end
+      end  |> IO.inspect
+
     with true <- Process.alive?(pid),
       { :ok, _ } <- Postgrex.query(pid, "SELECT 1", []) do
         if conn.public_access == :enabled, do: PgSQL.Conn.make_persistent(pid, conn, conn.supervisor)
