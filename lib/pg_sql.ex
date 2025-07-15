@@ -70,8 +70,7 @@ defmodule PgSQL do
     kw_conn = Map.to_list(%{conn|name: name})
     { :ok, pid } =
       if conn.supervisor do
-        # Supervisor.start_child(conn.supervisor, Postgrex.child_spec(kw_conn))
-        Postgrex.start_link(kw_conn)
+        Supervisor.start_child(conn.supervisor, kw_conn |> Postgrex.child_spec() |> Map.put(:id, name) )
       else
         Postgrex.start_link(kw_conn)
       end
