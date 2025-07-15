@@ -67,7 +67,12 @@ defmodule PgSQL do
   @spec connect(conn :: %Conn{}) :: pg_conn() | :error
   def connect(conn) do
     {_, kw_conn} = Keyword.pop(Map.to_list(conn), :name)
-    { :ok, pid } = Postgrex.start_link(kw_conn)
+    { :ok, pid } =
+      if conn.supervisor do
+        Supervisor.start_child(conn.supervisor, Postgrex.child_spec(kw_conn))
+      else
+        Postgrex.start_link(kw_conn)
+      end
     with true <- Process.alive?(pid),
       { :ok, _ } <- Postgrex.query(pid, "SELECT 1", []) do
         if conn.public_access == :enabled, do: PgSQL.Conn.make_persistent(pid, conn, conn.supervisor)
