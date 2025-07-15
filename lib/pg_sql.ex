@@ -36,7 +36,7 @@ defmodule PgSQL do
 
     def make_persistent(pgconnect, pgdata, sup \\ nil) do
       if sup do
-        Supervisor.start_child(sup, child_spec({pgconnect, pgdata}))
+        Supervisor.start_child(sup, {pgconnect, pgdata} |> child_spec() |> Map.put(:id, (pgdata.name || __MODULE__)))
       else
         start_link({pgconnect, pgdata})
       end
@@ -67,14 +67,14 @@ defmodule PgSQL do
   @spec connect(conn :: %Conn{}) :: pg_conn() | :error
   def connect(conn) do
     name = String.to_atom("pg_" <> to_string(conn.name) <> (0..9999 |> Enum.random() |> to_string()))
-    kw_conn = Map.to_list(%{conn|name: name}) |> IO.inspect
+    kw_conn = Map.to_list(%{conn|name: name})
     { :ok, pid } =
       if conn.supervisor do
         # Supervisor.start_child(conn.supervisor, Postgrex.child_spec(kw_conn))
         Postgrex.start_link(kw_conn)
       else
         Postgrex.start_link(kw_conn)
-      end  |> IO.inspect
+      end
 
     with true <- Process.alive?(pid),
       { :ok, _ } <- Postgrex.query(pid, "SELECT 1", []) do
