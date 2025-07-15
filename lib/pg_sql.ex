@@ -66,7 +66,8 @@ defmodule PgSQL do
   # connect/1
   @spec connect(conn :: %Conn{}) :: pg_conn() | :error
   def connect(conn) do
-    {_, kw_conn} = Keyword.pop(Map.to_list(conn), :name)
+    name = String.to_atom("pg_" <> to_string(conn.name) <> (0..9999 |> Enum.random() |> to_string()))
+    kw_conn = Map.to_list(%{conn|name: name})
     { :ok, pid } =
       if conn.supervisor do
         Supervisor.start_child(conn.supervisor, Postgrex.child_spec(kw_conn))
