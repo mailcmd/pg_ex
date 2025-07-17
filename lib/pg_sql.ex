@@ -130,6 +130,9 @@ defmodule PgSQL do
         { :error, %Postgrex.Error{postgres: %{message: message}} } ->
           # Log.log(:error, "[POSTGRES]: " <> String.Chars.to_string(:binary.bin_to_list(message)))
           {:error, message}
+        { :error, %{message: message} } ->
+          # Log.log(:error, "[POSTGRES]: " <> String.Chars.to_string(:binary.bin_to_list(message)))
+          {:error, message}
       end
     else
       # Log.log(:error, "[POSTGRES]: DB Connection down!")
