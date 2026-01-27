@@ -26,7 +26,7 @@ defmodule PgSQL do
       timeout: 15000,
       connect_timeout: 15000,
       socket_dir: nil,
-      public_access: :disabled,
+      public_access: :enabled,
       supervisor: nil
     ]
 
@@ -34,25 +34,38 @@ defmodule PgSQL do
       Agent.start_link(fn -> {pgconnect, pgdata} end, name: (pgdata.name || __MODULE__))
     end
 
-    def make_persistent(pgconnect, pgdata, sup \\ nil) do
-      if sup do
-        Supervisor.start_child(sup, {pgconnect, pgdata} |> child_spec() |> Map.put(:id, (pgdata.name || __MODULE__)))
-      else
-        start_link({pgconnect, pgdata})
-      end
-    end
-
     def get(name \\ __MODULE__) do
-      {conn, data} = Agent.get(name, fn cinfo -> cinfo end)
-      if Process.alive?(conn) do
-        conn
-      else
-        conn = PgSQL.connect(data)
-        Agent.update(name, fn {_, data} -> {conn, data} end)
-        conn
-      end
+      {conn, _data} = Agent.get(name, fn cinfo -> cinfo end)
+      conn
+    end
+    def update(name \\ __MODULE__, {conn, data}) do
+      Agent.update(name, fn _ -> {conn, data} end)
     end
   end
+
+  ###########################################################################3
+  ## To start supervised
+
+  def child_spec(name \\ __MODULE__, connect_data) do
+    %{
+      id: name,
+      start: {name, :start_link, connect_data}
+    }
+  end
+
+  def start_link(connect_data) do
+    case connect(connect_data) do
+      :error ->
+        raise("Cannot connect to DB (#{inspect connect_data})")
+      pid ->        
+        {:ok, pid}
+    end
+  end
+
+  def start_link(hostname, database, username, password) do
+    start_link(%Conn{hostname: hostname, username: username, password: password, database: database})
+  end
+  
 
   ###########################################################################3
   ## Module API
@@ -68,17 +81,18 @@ defmodule PgSQL do
   def connect(conn) do
     name = String.to_atom("pg_" <> to_string(conn.name) <> (0..9999 |> Enum.random() |> to_string()))
     kw_conn = Map.to_list(%{conn|name: name})
-    { :ok, pid } =
-      if conn.supervisor do
-        Supervisor.start_child(conn.supervisor, kw_conn |> Postgrex.child_spec() |> Map.put(:id, name) )
-      else
-        Postgrex.start_link(kw_conn)
-      end
+    { :ok, pid } =  Postgrex.start_link(kw_conn)
 
     with true <- Process.alive?(pid),
       { :ok, _ } <- Postgrex.query(pid, "SELECT 1", []) do
-        if conn.public_access == :enabled, do: PgSQL.Conn.make_persistent(pid, conn, conn.supervisor)
-        pid
+      if conn.public_access == :enabled do
+        IO.inspect {pid, conn}
+        case PgSQL.Conn.start_link({pid, conn}) do
+          {:error, {:already_started, _}} -> PgSQL.Conn.update({pid, conn})
+          _ -> :ok
+        end
+      end
+      pid
     else
       _ ->
         close(pid)
@@ -87,12 +101,13 @@ defmodule PgSQL do
   end
 
   # connect!/4
-  @spec connect(hostname :: String.t, database :: String.t, username :: String.t, password :: String.t)
+  @spec connect!(hostname :: String.t, database :: String.t, username :: String.t, password :: String.t)
                 :: pg_conn()
-  def connect!(hostname, database, username, password), do:
-    connect!(%Conn{hostname: hostname, username: username, password: password, database: database})
+  def connect!(hostname, database, username, password),
+      do: connect!(%Conn{hostname: hostname, username: username, password: password, database: database})
+  
   # connect!/1
-  @spec connect(conn :: %Conn{}) :: pg_conn()
+  @spec connect!(conn :: %Conn{}) :: pg_conn()
   def connect!(conn) do
     conn = connect(conn)
     if conn == :error do
