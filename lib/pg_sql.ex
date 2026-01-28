@@ -86,7 +86,6 @@ defmodule PgSQL do
     with true <- Process.alive?(pid),
       { :ok, _ } <- Postgrex.query(pid, "SELECT 1", []) do
       if conn.public_access == :enabled do
-        IO.inspect {pid, conn}
         case PgSQL.Conn.start_link({pid, conn}) do
           {:error, {:already_started, _}} -> PgSQL.Conn.update({pid, conn})
           _ -> :ok
