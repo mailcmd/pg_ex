@@ -49,7 +49,7 @@ defmodule PgSQL do
   def child_spec(name \\ __MODULE__, connect_data) do
     %{
       id: name,
-      start: {name, :start_link, connect_data}
+      start: {__MODULE__, :start_link, [connect_data]}
     }
   end
 
