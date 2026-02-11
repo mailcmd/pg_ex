@@ -27,19 +27,27 @@ defmodule PgSQL do
       connect_timeout: 15000,
       socket_dir: nil,
       public_access: :enabled,
-      supervisor: nil
+      supervisor: nil,
+      connections: 1
     ]
 
-    def start_link({pgconnect, pgdata}) do
-      Agent.start_link(fn -> {pgconnect, pgdata} end, name: (pgdata.name || __MODULE__))
+    def start_link({pgconnects, pgdata}) do
+      conns = CList.new(pgconnects)
+      Agent.start_link(fn -> {conns, pgdata} end, name: (pgdata.name || __MODULE__))
     end
 
     def get(name \\ __MODULE__) do
-      {conn, _data} = Agent.get(name, fn cinfo -> cinfo end)
+      {conns, pgdata} = Agent.get(name, fn cinfo -> cinfo end)
+      {conn, conns} = CList.next(conns)
+      update(name, {conns, pgdata})
       conn
     end
-    def update(name \\ __MODULE__, {conn, data}) do
-      Agent.update(name, fn _ -> {conn, data} end)
+    def update(name \\ __MODULE__, {conns, data}) do
+      Agent.update(name, fn _ -> {conns, data} end)
+    end
+    def close(name \\ __MODULE__) do
+      {conns, _} = Agent.get(name, fn cinfo -> cinfo end)
+      Enum.map(conns, &GenServer.stop/1)
     end
   end
 
@@ -63,7 +71,9 @@ defmodule PgSQL do
   end
 
   def start_link(hostname, database, username, password) do
-    start_link(%Conn{hostname: hostname, username: username, password: password, database: database})
+    start_link(
+      %Conn{hostname: hostname, username: username, password: password, database: database}
+    )
   end
   
 
@@ -71,42 +81,66 @@ defmodule PgSQL do
   ## Module API
 
   # connect/4
-  @spec connect(hostname :: String.t, database :: String.t, username :: String.t, password :: String.t)
+  @spec connect(
+          hostname :: String.t, database :: String.t, username :: String.t, password :: String.t)
                 :: pg_conn() | :error
   def connect(hostname, database, username, password), do:
     connect(%Conn{hostname: hostname, username: username, password: password, database: database})
 
   # connect/1
-  @spec connect(conn :: %Conn{}) :: pg_conn() | :error
+  @spec connect(conn :: %Conn{}) :: list(pg_conn()) | :error
   def connect(conn) do
-    name = String.to_atom("pg_" <> to_string(conn.name) <> (0..9999 |> Enum.random() |> to_string()))
-    kw_conn = Map.to_list(%{conn|name: name})
-    { :ok, pid } =  Postgrex.start_link(kw_conn)
+    # Open N connections
+    pids = 
+      Enum.map(1..conn.connections, fn _ ->
+        # This name is just for Postgrex module
+        name =
+          "pg_"
+          |> Kernel.<>("#{conn.name}")
+          |> Kernel.<>("#{Enum.random(0..9999)}")
+          |> String.to_atom()
+    
+        kw_conn = Map.to_list(%{conn|name: name})    
+        { :ok, pid } =  Postgrex.start_link(kw_conn)
 
-    with true <- Process.alive?(pid),
-      { :ok, _ } <- Postgrex.query(pid, "SELECT 1", []) do
-      if conn.public_access == :enabled do
-        case PgSQL.Conn.start_link({pid, conn}) do
-          {:error, {:already_started, _}} -> PgSQL.Conn.update({pid, conn})
+        with true <- Process.alive?(pid),
+             { :ok, _ } <- Postgrex.query(pid, "SELECT 1", []) do
+          pid
+        else
+          _ ->
+            GenServer.stop(pid)
+            :error
+        end      
+      end)
+      |> Enum.filter(&(&1 != :error))
+
+    cond do
+      length(pids) == 0 ->
+        :error
+      
+      conn.public_access == :enabled -> 
+        case PgSQL.Conn.start_link({pids, conn}) do
+          {:error, {:already_started, _}} -> PgSQL.Conn.update({pids, conn})
           _ -> :ok
         end
-      end
-      pid
-    else
-      _ ->
-        close(pid)
-        :error
+        pids
+
+      true ->
+        pids
     end
   end
 
   # connect!/4
-  @spec connect!(hostname :: String.t, database :: String.t, username :: String.t, password :: String.t)
-                :: pg_conn()
+  @spec connect!(
+          hostname :: String.t, database :: String.t, username :: String.t, password :: String.t)
+                :: list(pg_conn())
   def connect!(hostname, database, username, password),
-      do: connect!(%Conn{hostname: hostname, username: username, password: password, database: database})
+      do: connect!(
+            %Conn{hostname: hostname, username: username, password: password, database: database}
+          )
   
   # connect!/1
-  @spec connect!(conn :: %Conn{}) :: pg_conn()
+  @spec connect!(conn :: %Conn{}) :: list(pg_conn()) 
   def connect!(conn) do
     conn = connect(conn)
     if conn == :error do
@@ -115,9 +149,13 @@ defmodule PgSQL do
     conn
   end
 
-  @spec close(conn :: pg_conn(), reason :: atom()) :: :ok
-  def close(conn, reason \\ :normal) do
-    GenServer.stop(conn, reason)
+  @spec close() :: list(:ok)
+  def close() do
+    PgSQL.Conn.close()
+  end
+  @spec close(conn :: atom()) :: list(:ok)
+  def close(conn_name) do
+    PgSQL.Conn.close(conn_name)
   end
 
   @spec query(conn :: pg_conn(), sql :: String.t, opts :: Keyword.t()) :: list()
