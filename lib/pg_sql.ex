@@ -1,59 +1,20 @@
 defmodule PgSQL do
   @moduledoc """
   Exposed functions:
+    - start_link
     - connect
     - close
     - query
     - raw_query
 
-
   """
 
+  alias PgSQL.Conn
+  
   @type pg_conn() :: pid()
 
-  defmodule Conn do
-    use Agent
-
-    @enforce_keys [:hostname, :username, :password, :database]
-    defstruct  [
-      :hostname,
-      :username,
-      :password,
-      :database,
-      name: nil,
-      port: 5432,
-      parameters: [],
-      timeout: 15000,
-      connect_timeout: 15000,
-      socket_dir: nil,
-      public_access: :enabled,
-      supervisor: nil,
-      connections: 1
-    ]
-
-    def start_link({pgconnects, pgdata}) do
-      conns = CList.new(pgconnects)
-      Agent.start_link(fn -> {conns, pgdata} end, name: (pgdata.name || __MODULE__))
-    end
-
-    def get(name \\ __MODULE__) do
-      {conns, pgdata} = Agent.get(name, fn cinfo -> cinfo end)
-      {conn, conns} = CList.next(conns)
-      update(name, {conns, pgdata})
-      conn
-    end
-    def update(name \\ __MODULE__, {conns, data}) do
-      Agent.update(name, fn _ -> {conns, data} end)
-    end
-    def close(name \\ __MODULE__) do
-      {conns, _} = Agent.get(name, fn cinfo -> cinfo end)
-      Enum.map(conns, &GenServer.stop/1)
-    end
-  end
-
-  ###########################################################################3
+  #############################################################################################
   ## To start supervised
-
   def child_spec(name \\ __MODULE__, connect_data) do
     %{
       id: name,
@@ -61,12 +22,23 @@ defmodule PgSQL do
     }
   end
 
+  #############################################################################################
+  ## Module API
+  #############################################################################################
+
+  #############################################################################################
+  # if the pg connections are init with start_link the module create a supervisor to manage the
+  # connections and restart them in case of unexpected close. This function also allow to open
+  # connections with a parent supervisor because PgSQL define child_spec and start_link return
+  # {:ok, <pid_of_supervisor>}
   def start_link(connect_data) do
-    case connect(connect_data) do
+    sup_name = "#{(connect_data.name || __MODULE__)}.Supervisor" |> String.to_atom()
+    {:ok, sup} = Supervisor.start_link([], name: sup_name, strategy: :one_for_one)
+    case connect(%{connect_data | supervisor: sup_name}) do
       :error ->
         raise("Cannot connect to DB (#{inspect connect_data})")
-      pid ->        
-        {:ok, pid}
+      _ ->        
+        {:ok, sup}
     end
   end
 
@@ -76,10 +48,9 @@ defmodule PgSQL do
     )
   end
   
-
-  ###########################################################################3
-  ## Module API
-
+  #############################################################################################
+  # If you do not want to open connection(s) as part of a supervised tree, directly can use
+  # this function and get as return {:ok, [<list_of_pg_conn>]}
   # connect/4
   @spec connect(
           hostname :: String.t, database :: String.t, username :: String.t, password :: String.t)
@@ -88,20 +59,26 @@ defmodule PgSQL do
     connect(%Conn{hostname: hostname, username: username, password: password, database: database})
 
   # connect/1
-  @spec connect(conn :: %Conn{}) :: list(pg_conn()) | :error
-  def connect(conn) do
+  @spec connect(pgdata :: %Conn{}) :: list(pg_conn()) | :error
+  def connect(pgdata) do
     # Open N connections
     pids = 
-      Enum.map(1..conn.connections, fn _ ->
+      Enum.map(1..pgdata.connections, fn _ ->
         # This name is just for Postgrex module
         name =
           "pg_"
-          |> Kernel.<>("#{conn.name}")
+          |> Kernel.<>("#{pgdata.name}")
           |> Kernel.<>("#{Enum.random(0..9999)}")
           |> String.to_atom()
     
-        kw_conn = Map.to_list(%{conn|name: name})    
-        { :ok, pid } =  Postgrex.start_link(kw_conn)
+        kw_conn = Map.to_list(%{pgdata|name: name})        
+        {:ok, pid} = 
+          if pgdata.supervisor do
+            spec = kw_conn |> Postgrex.child_spec() |> Map.put(:id, name)
+            Supervisor.start_child(pgdata.supervisor, spec)
+          else
+            Postgrex.start_link(kw_conn)          
+          end
 
         with true <- Process.alive?(pid),
              { :ok, _ } <- Postgrex.query(pid, "SELECT 1", []) do
@@ -118,9 +95,10 @@ defmodule PgSQL do
       length(pids) == 0 ->
         :error
       
-      conn.public_access == :enabled -> 
-        case PgSQL.Conn.start_link({pids, conn}) do
-          {:error, {:already_started, _}} -> PgSQL.Conn.update({pids, conn})
+      # if is of public access PgSQL.Conn must be started
+      pgdata.public_access == :enabled -> 
+        case PgSQL.Conn.start_link({pids, pgdata}) do
+          {:error, {:already_started, _}} -> PgSQL.Conn.update({pids, pgdata})
           _ -> :ok
         end
         pids
@@ -140,20 +118,20 @@ defmodule PgSQL do
           )
   
   # connect!/1
-  @spec connect!(conn :: %Conn{}) :: list(pg_conn()) 
-  def connect!(conn) do
-    conn = connect(conn)
+  @spec connect!(pgdata :: %Conn{}) :: list(pg_conn()) 
+  def connect!(pgdata) do
+    conn = connect(pgdata)
     if conn == :error do
       raise("[POSTGRES]: Error connecting to Postgres DB")
     end
     conn
   end
 
-  @spec close() :: list(:ok)
+  @spec close() :: :ok
   def close() do
     PgSQL.Conn.close()
   end
-  @spec close(conn :: atom()) :: list(:ok)
+  @spec close(conn :: atom()) :: :ok
   def close(conn_name) do
     PgSQL.Conn.close(conn_name)
   end
@@ -169,7 +147,11 @@ defmodule PgSQL do
     end
   end
 
-  @spec raw_query(conn :: pg_conn(), sql :: String.t, opts :: Keyword.t()) :: atom() | list() | {:error, Strint.t}
+  @spec raw_query(
+          conn :: pg_conn(),
+          sql :: String.t,
+          opts :: Keyword.t()
+        ) :: atom() | list() | {:error, Strint.t}
   def raw_query(conn, sql, opts) do
     if Process.alive?(conn) do
       case Postgrex.query(conn, sql, [], opts) do
