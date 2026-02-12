@@ -12,26 +12,22 @@ defmodule PgSQL.Conn do
     parameters: [],
     timeout: 15000,
     connect_timeout: 15000,
-    socket_dir: nil,
     public_access: :enabled,
     supervisor: nil,
-    monitoring_refs: [],
-    connections: 1
+    pool_size: 5,
+    pool_overflow: 2
   ]
 
   ##############################################################################################
   ## Public API
   ##############################################################################################
-  def start_link({pids_conns, pgdata}) do
-    cl_conns = CList.new(pids_conns) 
-    GenServer.start_link(__MODULE__, {cl_conns, pgdata}, name: (pgdata.name || __MODULE__))
+  def start_link({conn, pgdata}) do
+    GenServer.start_link(__MODULE__, {conn, pgdata}, name: (pgdata.name || __MODULE__))
   end
 
   def get(name \\ __MODULE__) do
-    {cl_conns, pgdata} = GenServer.call(name, :get)
-    {pid_conn, cl_conns} = CList.next(cl_conns)
-    update(name, {cl_conns, pgdata})
-    pid_conn
+    {conn, _pgdata} = GenServer.call(name, :get)
+    conn
   end
 
   def get_all(name \\ __MODULE__) do
@@ -39,23 +35,13 @@ defmodule PgSQL.Conn do
   end
 
   def update(name \\ __MODULE__, status)
-  def update(name, {cl_conns, pgdata}) when is_map(cl_conns) do 
-    GenServer.cast(name, {:update, {cl_conns, pgdata}})
-  end
-  def update(name, {conns, pgdata}) when is_list(conns) do  
-    cl_conns = CList.new(conns) 
-    GenServer.cast(name, {:update, {cl_conns, pgdata}})
+  def update(name, {conn, pgdata}) do 
+    GenServer.cast(name, {:update, {conn, pgdata}})
   end
   
   def close(name \\ __MODULE__) do
-    {cl_conns, pgdata} = get_all(name)
-    if pgdata.supervisor do
-      Enum.map(pgdata.monitoring_refs, &Process.demonitor/1) |> IO.inspect
-      Supervisor.stop(pgdata.supervisor, :normal)
-    else
-      cl_conns |> CList.to_list() |> Enum.each(&GenServer.stop/1)
-    end      
-    GenServer.stop(name)
+    {conn, _pgdata} = get_all(name)
+    GenServer.stop(conn)
   end
 
   ##############################################################################################
@@ -63,16 +49,8 @@ defmodule PgSQL.Conn do
   ##############################################################################################
 
   @impl true
-  def init({cl_conns, pgdata}) do
-    # if the connections are supervised, get start monitoring or the connections to recevie
-    # update in case of unexepected close connection
-    pgdata = 
-      if pgdata.supervisor do
-        Map.put(pgdata, :monitoring_refs, Enum.map(cl_conns, &Process.monitor/1))
-      else
-        pgdata
-      end
-    {:ok, {cl_conns, pgdata}}
+  def init({conn, pgdata}) do
+    {:ok, {conn, pgdata}}
   end
 
   @impl true
@@ -80,37 +58,12 @@ defmodule PgSQL.Conn do
     {:reply, status, status}
   end
 
-  # update always receive conns as CList
   @impl true
-  def handle_cast({:update, {cl_conns, pgdata}}, _status) do
-    pgdata =
-      if pgdata.supervisor do
-        Enum.each(pgdata.monitoring_refs, &Process.demonitor/1)
-        Map.put(pgdata, :monitoring_refs, Enum.map(cl_conns, &Process.monitor/1))
-      else
-        pgdata
-      end
-    {:noreply, {cl_conns, pgdata}}
+  def handle_cast({:update, {conn, pgdata}}, _status) do
+    {:noreply, {conn, pgdata}}
   end
   
-  # The genserver wont receive this message if the connections are not supervised
   @impl true
-  def handle_info({:DOWN, _, :process, _pid, :shutdown}, status) do
-    {:noreply, status}
-  end
-  def handle_info({:DOWN, ref, :process, _pid, _}, {_cl_conns, pgdata} = status) do
-    alert("PgSQL conn closed!!")
-    Process.demonitor(ref)
-    pids = 
-      pgdata.supervisor
-      |> Supervisor.which_children()
-      |> Enum.map(fn {_, pid, _, _} -> pid end)
-
-    cl_conns = CList.new(pids)
-    handle_cast({:update, {cl_conns, pgdata}}, status)
-    {:noreply, {cl_conns, pgdata}}
-  end
-
   def handle_info(message, status) do
     alert("Unexpected message #{inspect message} (#{inspect status})#{IO.ANSI.reset()}")
     {:noreply, status}

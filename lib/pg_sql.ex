@@ -18,7 +18,7 @@ defmodule PgSQL do
   def child_spec(name \\ __MODULE__, connect_data) do
     %{
       id: name,
-      start: {__MODULE__, :start_link, [connect_data]}
+      start: {__MODULE__, :start_link, connect_data}
     }
   end
 
@@ -32,13 +32,11 @@ defmodule PgSQL do
   # connections with a parent supervisor because PgSQL define child_spec and start_link return
   # {:ok, <pid_of_supervisor>}
   def start_link(connect_data) do
-    sup_name = "#{(connect_data.name || __MODULE__)}.Supervisor" |> String.to_atom()
-    {:ok, sup} = Supervisor.start_link([], name: sup_name, strategy: :one_for_one)
-    case connect(%{connect_data | supervisor: sup_name}) do
+    case connect(connect_data) do
       :error ->
         raise("Cannot connect to DB (#{inspect connect_data})")
-      _ ->        
-        {:ok, sup}
+      conn ->        
+        {:ok, conn}
     end
   end
 
@@ -61,56 +59,47 @@ defmodule PgSQL do
   # connect/1
   @spec connect(pgdata :: %Conn{}) :: list(pg_conn()) | :error
   def connect(pgdata) do
-    # Open N connections
-    pids = 
-      Enum.map(1..pgdata.connections, fn _ ->
-        # This name is just for Postgrex module
-        name =
-          "pg_"
-          |> Kernel.<>("#{pgdata.name}")
-          |> Kernel.<>("#{Enum.random(0..9999)}")
-          |> String.to_atom()
-    
-        kw_conn =
-          pgdata
-          |> Map.put(:name, name)
-          |> Map.to_list()
-          # |> Keyword.put(:socket_options, [linger: {:on, 0}])
-          
-        {:ok, pid} = 
-          if pgdata.supervisor do
-            spec = kw_conn |> Postgrex.child_spec() |> Map.put(:id, name)
-            Supervisor.start_child(pgdata.supervisor, spec)
-          else
-            Postgrex.start_link(kw_conn)          
-          end
+    pgdata = struct(PgSQL.Conn, pgdata)
+    kw_conn =
+      pgdata
+      |> Map.to_list()
+      |> Keyword.put(:socket_options, [{:raw, 65535, 8, <<1, 0, 0, 0, 0, 0, 0, 0>>}])
 
-        with true <- Process.alive?(pid),
-             { :ok, _ } <- Postgrex.query(pid, "SELECT 1", []) do
-          pid
-        else
-          _ ->
+    {:ok, pid} =
+      if pgdata.supervisor do
+        Supervisor.start_child(pgdata.supervisor, {Postgrex, [kw_conn]})
+      else
+        Postgrex.start_link(kw_conn)
+      end
+    
+    conn = 
+      with true <- Process.alive?(pid),
+           {:ok, _} <- Postgrex.query(pid, "SELECT 1", []) do
+        pid
+      else
+        _ ->
+          try do
             GenServer.stop(pid)
-            :error
-        end      
-      end)
-      |> Enum.filter(&(&1 != :error))
+          rescue
+            _ -> :ok
+          end
+          :error
+      end      
 
     cond do
-      length(pids) == 0 ->
-        :error
-      
-      # if is of public access PgSQL.Conn must be started
+      pgdata.public_access == :enabled and pgdata.supervisor ->
+        Supervisor.start_child(pgdata.supervisor, {PgSQL.Conn, [{conn, pgdata}]})
+        
       pgdata.public_access == :enabled -> 
-        case PgSQL.Conn.start_link({pids, pgdata}) do
-          {:error, {:already_started, _}} -> PgSQL.Conn.update({pids, pgdata})
-          _ -> :ok
+        case PgSQL.Conn.start_link({conn, pgdata}) do
+          {:error, {:already_started, _}} ->
+            PgSQL.Conn.update({conn, pgdata})
+          _ ->
+            :ok
         end
-        pids
-
-      true ->
-        pids
     end
+    
+    conn
   end
 
   # connect!/4
