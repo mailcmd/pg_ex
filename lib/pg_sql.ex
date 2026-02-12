@@ -59,7 +59,13 @@ defmodule PgSQL do
   # connect/1
   @spec connect(pgdata :: %Conn{}) :: list(pg_conn()) | :error
   def connect(pgdata) do
-    pgdata = struct(PgSQL.Conn, pgdata)
+    pgdata =
+      if not is_struct(pgdata) do
+        struct(PgSQL.Conn, pgdata)
+      else
+        pgdata
+      end
+    
     kw_conn =
       pgdata
       |> Map.to_list()
