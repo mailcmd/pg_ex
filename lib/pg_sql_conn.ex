@@ -34,6 +34,10 @@ defmodule PgSQL.Conn do
     pid_conn
   end
 
+  def get_all(name \\ __MODULE__) do
+    GenServer.call(name, :get)
+  end
+
   def update(name \\ __MODULE__, status)
   def update(name, {cl_conns, pgdata}) when is_map(cl_conns) do 
     GenServer.cast(name, {:update, {cl_conns, pgdata}})
@@ -44,8 +48,9 @@ defmodule PgSQL.Conn do
   end
   
   def close(name \\ __MODULE__) do
-    {cl_conns, pgdata} = get(name)
+    {cl_conns, pgdata} = get_all(name)
     if pgdata.supervisor do
+      Enum.map(pgdata.monitoring_refs, &Process.demonitor/1) |> IO.inspect
       Supervisor.stop(pgdata.supervisor, :normal)
     else
       cl_conns |> CList.to_list() |> Enum.each(&GenServer.stop/1)
@@ -90,6 +95,9 @@ defmodule PgSQL.Conn do
   
   # The genserver wont receive this message if the connections are not supervised
   @impl true
+  def handle_info({:DOWN, _, :process, _pid, :shutdown}, status) do
+    {:noreply, status}
+  end
   def handle_info({:DOWN, ref, :process, _pid, _}, {_cl_conns, pgdata} = status) do
     alert("PgSQL conn closed!!")
     Process.demonitor(ref)

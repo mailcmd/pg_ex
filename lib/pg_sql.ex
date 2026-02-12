@@ -71,7 +71,12 @@ defmodule PgSQL do
           |> Kernel.<>("#{Enum.random(0..9999)}")
           |> String.to_atom()
     
-        kw_conn = Map.to_list(%{pgdata|name: name})        
+        kw_conn =
+          pgdata
+          |> Map.put(:name, name)
+          |> Map.to_list()
+          # |> Keyword.put(:socket_options, [linger: {:on, 0}])
+          
         {:ok, pid} = 
           if pgdata.supervisor do
             spec = kw_conn |> Postgrex.child_spec() |> Map.put(:id, name)

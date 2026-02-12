@@ -21,7 +21,7 @@ defmodule PgSQL.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:postgrex, ">= 0.0.0"},
+      {:postgrex, "~> 0.22.0"},
       {:clist, "~> 0.1.3"}
     ]
   end
