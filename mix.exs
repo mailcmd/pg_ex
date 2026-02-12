@@ -22,7 +22,6 @@ defmodule PgSQL.MixProject do
   defp deps do
     [
       {:postgrex, "~> 0.22.0"},
-      {:clist, "~> 0.1.3"}
     ]
   end
 end
