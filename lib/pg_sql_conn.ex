@@ -91,6 +91,7 @@ defmodule PgSQL.Conn do
   # The genserver wont receive this message if the connections are not supervised
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, _}, {_cl_conns, pgdata} = status) do
+    alert("PgSQL conn closed!!")
     Process.demonitor(ref)
     pids = 
       pgdata.supervisor
@@ -103,8 +104,14 @@ defmodule PgSQL.Conn do
   end
 
   def handle_info(message, status) do
-    IO.puts("[PgSQL.Conn] Unexpected message #{inspect message} (#{inspect status})")
+    alert("Unexpected message #{inspect message} (#{inspect status})#{IO.ANSI.reset()}")
     {:noreply, status}
+  end
+
+  defp alert(message) do
+    IO.puts(
+      "#{IO.ANSI.red_background()}[PgSQL.Conn] #{message}#{IO.ANSI.reset()}"
+    )
   end
 
 end
